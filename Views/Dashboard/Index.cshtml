@@ -1,0 +1,167 @@
+@model ASVS_Security_Auditor.Core.Entities.Assessment
+
+@{
+    ViewData["Title"] = "Tableau de bord";
+}
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Tableau de bord d'Évaluation</h1>
+        @if (Model != null)
+        {
+            <button onclick="window.print()" class="btn btn-outline-secondary d-print-none">
+                <i class="bi bi-printer"></i> Exporter en PDF
+            </button>
+        }
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <form method="get" asp-action="Index">
+                <div class="input-group">
+                    <select name="assessmentId" class="form-select" onchange="this.form.submit()">
+                        <option value="">-- Sélectionner une évaluation --</option>
+                        @if (ViewBag.Assessments != null)
+                        {
+                            foreach (var a in ViewBag.Assessments)
+                            {
+                                if (Model != null && Model.Id == a.Id)
+                                {
+                                    <option value="@a.Id" selected>@a.Name (@a.DateCreated.ToShortDateString())</option>
+                                }
+                                else
+                                {
+                                    <option value="@a.Id">@a.Name (@a.DateCreated.ToShortDateString())</option>
+                                }
+                            }
+                        }
+                    </select>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    @if (Model != null)
+    {
+        <div class="row mb-4">
+            <div class="col-md-4">
+                <div class="card text-white bg-primary mb-3 shadow-sm">
+                    <div class="card-header">Score de Sécurité</div>
+                    <div class="card-body">
+                        <h2 class="card-title text-center">@ViewBag.Score.ToString("0.0")%</h2>
+                        <p class="card-text text-center">Taux de Conformité (hors N/A)</p>
+                    </div>
+                </div>
+
+                <div class="card mb-3 shadow-sm">
+                    <div class="card-header">Niveau de Risque</div>
+                    <div class="card-body text-center">
+                        <h3 class="mt-2"><span class="badge @ViewBag.RiskBadge p-3">@ViewBag.RiskLevel</span></h3>
+                        <p class="text-muted mt-3 mb-0"><small>Basé sur le score actuel</small></p>
+                    </div>
+                </div>
+
+                <div class="card shadow-sm">
+                    <div class="card-header">Points Faibles (Top 3)</div>
+                    <ul class="list-group list-group-flush">
+                        @if (ViewBag.WeakAreas != null && ((Dictionary<string, int>)ViewBag.WeakAreas).Any())
+                        {
+                            foreach (var weakArea in (Dictionary<string, int>)ViewBag.WeakAreas)
+                            {
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    @weakArea.Key
+                                    <span class="badge bg-danger rounded-pill">@weakArea.Value échecs</span>
+                                </li>
+                            }
+                        }
+                        else
+                        {
+                            <li class="list-group-item text-muted">Aucun point faible détecté.</li>
+                        }
+                    </ul>
+                </div>
+            </div>
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">Progression Globale</div>
+                    <div class="card-body text-center">
+                        <canvas id="statusChart" style="max-height: 250px;"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Analyse par Chapitre</div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Chapitre</th>
+                                <th>Total</th>
+                                <th>Conforme</th>
+                                <th>Non Conforme</th>
+                                <th>N/A</th>
+                                <th>En attente</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var group in Model.Items.GroupBy(i => i.AsvsRequirement.ChapterName))
+                            {
+                                <tr>
+                                    <td>@group.Key</td>
+                                    <td>@group.Count()</td>
+                                    <td class="text-success">@group.Count(i => i.Status == ASVS_Security_Auditor.Core.Entities.AssessmentStatus.Valid)</td>
+                                    <td class="text-danger">@group.Count(i => i.Status == ASVS_Security_Auditor.Core.Entities.AssessmentStatus.NotValid)</td>
+                                    <td class="text-muted">@group.Count(i => i.Status == ASVS_Security_Auditor.Core.Entities.AssessmentStatus.NotApplicable)</td>
+                                    <td class="text-warning">@group.Count(i => i.Status == ASVS_Security_Auditor.Core.Entities.AssessmentStatus.Pending)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="alert alert-info">Veuillez sélectionner ou créer une évaluation pour voir le tableau de bord.</div>
+    }
+</div>
+
+@section Scripts {
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        @if (Model != null)
+        {
+            <text>
+            var ctx = document.getElementById('statusChart').getContext('2d');
+            var chart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Conforme', 'Non Conforme', 'N/A', 'En attente'],
+                    datasets: [{
+                        data: [@ViewBag.Stats[0], @ViewBag.Stats[1], @ViewBag.Stats[2], @ViewBag.Stats[3]],
+                        backgroundColor: [
+                            '#198754', // success
+                            '#dc3545', // danger
+                            '#6c757d', // secondary
+                            '#ffc107'  // warning
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                        }
+                    }
+                }
+            });
+            </text>
+        }
+    </script>
+}

@@ -1,0 +1,210 @@
+@model ASVS_Security_Auditor.Core.Entities.Assessment
+
+@{
+    ViewData["Title"] = "Évaluation : " + Model.Name;
+}
+
+<div class="container mt-4">
+    <h2>@Model.Name <span class="badge bg-secondary fs-6">@Model.DateCreated.ToShortDateString()</span></h2>
+    <hr />
+
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead class="table-dark">
+                <tr>
+                    <th>Chapitre</th>
+                    <th>ID</th>
+                    <th>Exigence</th>
+                    <th>Statut</th>
+                    <th>Notes</th>
+                    <th>Aide IA</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in Model.Items.OrderBy(i => i.AsvsRequirement.ChapterId).ThenBy(i => i.AsvsRequirement.Item))
+                {
+                    <tr>
+                        <td>@item.AsvsRequirement.ChapterName</td>
+                        <td>@item.AsvsRequirement.Item</td>
+                        <td title="@item.AsvsRequirement.Description">
+                            @if(item.AsvsRequirement.Description.Length > 100)
+                            {
+                                @(item.AsvsRequirement.Description.Substring(0, 100) + "...")
+                            }
+                            else
+                            {
+                                @item.AsvsRequirement.Description
+                            }
+                        </td>
+                        <td>
+                            <select class="form-select status-select" data-item-id="@item.Id">
+                                <option value="0" selected="@(item.Status == ASVS_Security_Auditor.Core.Entities.AssessmentStatus.Pending)">En attente</option>
+                                <option value="1" selected="@(item.Status == ASVS_Security_Auditor.Core.Entities.AssessmentStatus.Valid)">Conforme</option>
+                                <option value="2" selected="@(item.Status == ASVS_Security_Auditor.Core.Entities.AssessmentStatus.NotValid)">Non Conforme</option>
+                                <option value="3" selected="@(item.Status == ASVS_Security_Auditor.Core.Entities.AssessmentStatus.NotApplicable)">N/A</option>
+                            </select>
+                        </td>
+                        <td>
+                            <textarea class="form-control notes-input" data-item-id="@item.Id" rows="1">@item.Notes</textarea>
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-info explain-btn" data-req-id="@item.AsvsRequirementId">Expliquer</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal for AI Explanation -->
+<div class="modal fade" id="explainModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Assistant IA (Groq)</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="chatHistory" style="max-height: 400px; overflow-y: auto; margin-bottom: 15px; padding-right: 5px;"></div>
+                
+                <div id="aiLoading" class="text-center d-none my-2">
+                    <div class="spinner-border text-primary spinner-border-sm" role="status">
+                        <span class="visually-hidden">Chargement...</span>
+                    </div>
+                    <span class="text-muted ms-2">L'IA réfléchit...</span>
+                </div>
+
+                <div class="input-group mt-3">
+                    <input type="text" id="chatInput" class="form-control" placeholder="Posez une question à l'IA sur cette exigence..." />
+                    <button class="btn btn-primary" id="sendChatBtn">Envoyer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        $(document).ready(function () {
+            // Save Status or Notes on change
+            $('.status-select, .notes-input').change(function () {
+                var $row = $(this).closest('tr');
+                var itemId = $row.find('.status-select').data('item-id');
+                var status = $row.find('.status-select').val();
+                var notes = $row.find('.notes-input').val();
+
+                $.post('@Url.Action("UpdateStatus")', { itemId: itemId, status: status, notes: notes })
+                    .done(function () {
+                        // Optional: show a small success toast
+                    });
+            });
+
+            let currentReqId = null;
+            let chatMessages = [];
+
+            function appendMessage(role, content) {
+                var bg = role === 'user' ? 'bg-light border text-end ms-auto' : 'bg-primary text-white text-start me-auto';
+                var align = role === 'user' ? 'justify-content-end' : 'justify-content-start';
+                var formatted = content.replace(/\n/g, "<br>");
+                var html = `<div class="d-flex ${align} mb-3"><div class="p-3 rounded shadow-sm ${bg}" style="max-width: 85%;">${formatted}</div></div>`;
+                $('#chatHistory').append(html);
+                $('#chatHistory').scrollTop($('#chatHistory')[0].scrollHeight);
+            }
+
+            // Explain button logic
+            $('.explain-btn').click(function () {
+                currentReqId = $(this).data('req-id');
+                chatMessages = [];
+                $('#explainModal').modal('show');
+                $('#chatHistory').empty();
+                $('#chatInput').val('');
+                $('#aiLoading').removeClass('d-none');
+                $('#chatInput').prop('disabled', true);
+                $('#sendChatBtn').prop('disabled', true);
+
+                $.get('@Url.Action("ExplainRequirement")', { reqId: currentReqId })
+                    .done(function (data) {
+                        $('#aiLoading').addClass('d-none');
+                        chatMessages.push({ role: "assistant", content: data.explanation });
+                        appendMessage('assistant', data.explanation);
+                        $('#chatInput').prop('disabled', false).focus();
+                        $('#sendChatBtn').prop('disabled', false);
+                    })
+                    .fail(function () {
+                        $('#aiLoading').addClass('d-none');
+                        appendMessage('assistant', 'Échec du chargement de l\'explication. Vérifiez la configuration de l\'API Groq.');
+                    });
+            });
+
+            $('#sendChatBtn').click(async function () {
+                var text = $('#chatInput').val().trim();
+                if (!text) return;
+                
+                $('#chatInput').val('');
+                chatMessages.push({ role: "user", content: text });
+                appendMessage('user', text);
+                
+                $('#aiLoading').removeClass('d-none');
+                $('#chatInput').prop('disabled', true);
+                $('#sendChatBtn').prop('disabled', true);
+
+                // Placeholder for assistant message
+                var assistantMsgId = 'msg-' + Date.now();
+                var html = `<div class="d-flex justify-content-start mb-3"><div id="${assistantMsgId}" class="p-3 rounded shadow-sm bg-primary text-white text-start me-auto" style="max-width: 85%;">...</div></div>`;
+                $('#chatHistory').append(html);
+                $('#chatHistory').scrollTop($('#chatHistory')[0].scrollHeight);
+
+                try {
+                    const response = await fetch('@Url.Action("ChatStream")', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ requirementId: currentReqId, messages: chatMessages })
+                    });
+
+                    $('#aiLoading').addClass('d-none');
+                    $(`#${assistantMsgId}`).html(''); 
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder('utf-8');
+                    let fullReply = "";
+
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+                        
+                        const chunk = decoder.decode(value, { stream: true });
+                        const lines = chunk.split('\n');
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                const data = line.substring(6);
+                                if (data === '[DONE]') break;
+                                
+                                const textChunk = data.replace(/\\n/g, '\n').replace(/\\r/g, '\r');
+                                fullReply += textChunk;
+                                
+                                const formatted = fullReply.replace(/\n/g, "<br>");
+                                $(`#${assistantMsgId}`).html(formatted);
+                                $('#chatHistory').scrollTop($('#chatHistory')[0].scrollHeight);
+                            }
+                        }
+                    }
+                    
+                    chatMessages.push({ role: "assistant", content: fullReply });
+                } catch (err) {
+                    $('#aiLoading').addClass('d-none');
+                    $(`#${assistantMsgId}`).html("Erreur de communication avec l'IA.");
+                } finally {
+                    $('#chatInput').prop('disabled', false).focus();
+                    $('#sendChatBtn').prop('disabled', false);
+                }
+            });
+
+            $('#chatInput').keypress(function (e) {
+                if (e.which == 13 && !$('#sendChatBtn').prop('disabled')) {
+                    $('#sendChatBtn').click();
+                }
+            });
+        });
+    </script>
+}
